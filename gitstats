@@ -77,6 +77,32 @@ def getpipeoutput(cmds, quiet = False):
     return output.rstrip('\n')
 
 
+def exec_cmds(cmds, multi_cmd_type):
+    global exectime_external
+    cmds = ["%s | Out-File -Encoding utf8 -Append -FilePath ./temp.log\n" % item for item in cmds]
+    with open("./exec.ps1", "w", encoding = "utf-8") as f:
+        f.writelines(cmds)
+
+    start = time.time()
+    subprocess.run("./exec.ps1", capture_output = True, shell = True)
+    end = time.time()
+    os.remove("./exec.ps1")
+
+    res = []
+    with open("./temp.log", "r", encoding = "utf-8") as f:
+        for item in f.readlines():
+            try:
+                res.append(int(item))
+            except:
+                pass
+    os.remove("./temp.log")
+
+    exectime_external += (end - start)
+    print('[%.5f] >> %s' % (end - start, multi_cmd_type))
+
+    return res
+
+
 def getlogrange(defaultrange = 'HEAD', end_only = True):
     commit_range = getcommitrange(defaultrange, end_only)
     if len(conf['start_date']) > 0:
@@ -144,6 +170,20 @@ def getnumoffilesfromrev(time_rev):
             int(getpipeoutput(['(git ls-tree -r --name-only "%s" | Measure-Object -line).lines' % rev]).split('\n')[0]))
 
 
+def getnumoffilesfromrev_new(time_revs):
+    cmds = []
+    res = []
+    for item in time_revs:
+        t, rev = item
+        cmds.append(
+            '(git ls-tree -r --name-only "%s" | Measure-Object -line).lines' % rev)
+
+    for time_rev, count in zip(time_revs, exec_cmds(cmds, "multi cmds(git ls-tree -r --name-only)")):
+        res.append((int(time_rev[0]), time_rev[1], count))
+
+    return res
+
+
 def getnumoflinesinblob(ext_blob):
     """
 	Get number of lines in blob
@@ -152,6 +192,20 @@ def getnumoflinesinblob(ext_blob):
     # return (ext, blob_id, int(getpipeoutput(['git cat-file blob %s' % blob_id, 'wc -l']).split()[0]))
     return (
         ext, blob_id, int(getpipeoutput(['(git cat-file blob %s | Measure-Object -line).lines' % blob_id]).split()[0]))
+
+
+def getnumoflinesinblob_new(ext_blobs):
+    cmds = []
+    res = []
+
+    for item in ext_blobs:
+        ext, blob_id = item
+        cmds.append('(git cat-file blob %s | Measure-Object -line).lines' % blob_id)
+
+    for ext_blob, count in zip(ext_blobs, exec_cmds(cmds, "multi cmds(git cat-file blob)")):
+        res.append((ext_blob[0], ext_blob[1], count))
+
+    return res
 
 
 class DataCollector:
@@ -488,10 +542,11 @@ class GitDataCollector(DataCollector):
                 revs_to_read.append((time, rev))
 
         # Read revisions from repo
-        pool = Pool(processes = conf['processes'])
-        time_rev_count = pool.map(getnumoffilesfromrev, revs_to_read)
-        pool.terminate()
-        pool.join()
+        # pool = Pool(processes = conf['processes'])
+        # time_rev_count = pool.map(getnumoffilesfromrev, revs_to_read)
+        # pool.terminate()
+        # pool.join()
+        time_rev_count = getnumoffilesfromrev_new(revs_to_read)
 
         # Update cache with new revisions and append then to general list
         for (time, rev, count) in time_rev_count:
@@ -549,10 +604,11 @@ class GitDataCollector(DataCollector):
                 blobs_to_read.append((ext, blob_id))
 
         # Get info abount line count for new blob's that wasn't found in cache
-        pool = Pool(processes = conf['processes'])
-        ext_blob_linecount = pool.map(getnumoflinesinblob, blobs_to_read)
-        pool.terminate()
-        pool.join()
+        # pool = Pool(processes = conf['processes'])
+        # ext_blob_linecount = pool.map(getnumoflinesinblob, blobs_to_read)
+        # pool.terminate()
+        # pool.join()
+        ext_blob_linecount = getnumoflinesinblob_new(blobs_to_read)
 
         # Update cache and write down info about number of number of lines
         for (ext, blob_id, linecount) in ext_blob_linecount:
@@ -1446,11 +1502,11 @@ plot """
 
         os.chdir(path)
         files = glob.glob(path + '/*.plot')
-        for f in files:
-            # print("gnuplot cmd: %s" % (gnuplot_cmd + ' "%s"' % f))
-            out = getpipeoutput([gnuplot_cmd + ' "%s"' % f])
-            if len(out) > 0:
-                print(out)
+        # for f in files:
+        #     out = getpipeoutput([gnuplot_cmd + ' "%s"' % f])
+        #     if len(out) > 0:
+        #         print(out)
+        exec_cmds([gnuplot_cmd + ' "%s"' % f for f in files], "multi gnuplot")
 
     def printHeader(self, f, title = ''):
         f.write("""<!DOCTYPE html>
